@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { postToAppsScript } from "../lib/appsScriptApi";
 
 // แก้ไขบรรทัดแรกสุด
 export default function AdminDashboard({ books, fetchBooks, API_URL }) {
@@ -35,8 +36,9 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
   // 📸 สเตตัสอัปโหลดรูปภาพช่องเดี่ยว (ประหยัดพื้นที่)
   const [coverImg, setCoverImg] = useState({ file: null, preview: "" });
   const [uploading, setUploading] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
-  // ฟังก์ชันบีบอัดรูปภาพก่อนอัปโหลด เพื่อให้ส่งข้อมูลได้เร็วและใช้เป็น fallback ได้ชัวร์ 100%
+  // บีบอัดรูปก่อนส่งไป Google Apps Script เพื่อลดเวลาอัปโหลดและขนาด request
   const compressImage = (file, maxWidth = 600, maxHeight = 600, quality = 0.65) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -86,6 +88,7 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
   const handleImageChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
+      setSubmitError("");
       try {
         const compressedBase64 = await compressImage(file);
         setCoverImg({ file: file, preview: compressedBase64 });
@@ -102,70 +105,15 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
 
   const handleAddBookSubmit = async (e) => {
     e.preventDefault();
+    setSubmitError("");
     setUploading(true);
     try {
-      // 1. ตั้งค่าเริ่มต้นด้วยรูปภาพที่บีบอัดแล้ว (Data URL Base64) เผื่อกรณี ImgBB อัปโหลดไม่สำเร็จ
-      let finalImageUrl = coverImg.preview || "";
-
-      // 2. พยายามอัปโหลดไฟล์รูปภาพไปฝากไว้ที่ ImgBB เพื่อแปลงเป็น Direct URL
-      if (coverImg.file) {
-        try {
-          const formData = new FormData();
-          formData.append("image", coverImg.file);
-          
-          const imgRes = await fetch("https://api.imgbb.com/1/upload?key=c3598d89052a5ec2c640d210a562dfd1", {
-            method: "POST",
-            body: formData
-          });
-          
-          if (imgRes.ok) {
-            const imgData = await imgRes.json();
-            if (imgData && imgData.success && imgData.data && imgData.data.url) {
-              finalImageUrl = imgData.data.url; // ได้ Direct Link จาก ImgBB เรียบร้อย
-            } else {
-              console.warn("ImgBB response failed, using compressed base64 fallback:", imgData);
-            }
-          } else {
-            console.warn("ImgBB HTTP status error:", imgRes.status);
-          }
-        } catch (imgErr) {
-          console.error("ImgBB upload network error, using compressed base64 fallback:", imgErr);
-        }
+      if (!coverImg.file || !coverImg.preview) {
+        throw new Error("กรุณาเลือกรูปภาพหน้าปกหนังสือ");
       }
 
-      if (!finalImageUrl) {
-        alert("กรุณาเลือกรูปภาพหน้าปกหนังสือ");
-        setUploading(false);
-        return;
-      }
-
-      // 3. ส่งข้อมูลเข้า Google Apps Script โดยระบุทั้งภาษาไทย (ตรงตามชื่อคอลัมน์ใน Google Sheets) และภาษาอังกฤษ 100%
-      const payload = { 
-        action: "addBook", 
-
-        // --- คีย์ภาษาไทย (ตรงตามชื่อคอลัมน์ใน Google Sheets) ---
-        "ประเภท": newBook.type,
-        "ชื่อหนังสือ": newBook.title,
-        "ชื่อนักเขียน": newBook.author,
-        "สำนักพิมพ์": newBook.publisher,
-        "ราคาปก": newBook.type === "หนังสือทั่วไป" ? (newBook.cost || 0) : (newBook.price || 0),
-        "GP": newBook.gp ? Number(newBook.gp) / 100 : 0,
-        "สต็อก": newBook.stock,
-        "ราคาทุน": newBook.cost || 0,
-        "ราคาขาย": newBook.type === "หนังสือทั่วไป" ? (newBook.salePrice || 0) : (newBook.price || 0),
-        "ราคาขายจริง": newBook.type === "หนังสือทั่วไป" ? (newBook.salePrice || 0) : (newBook.price || 0),
-        "รายละเอียด": newBook.synopsis || "",
-        "เรื่องย่อ": newBook.synopsis || "",
-        "หมายเหตุ": newBook.note || "",
-        "ลิงก์รูปภาพ": finalImageUrl,
-        "รูปภาพ": finalImageUrl,
-        "ลิงก์ Twitter": newBook.twitterUrl || "",
-        "ลิงก์ X": newBook.twitterUrl || "",
-        "Twitter": newBook.twitterUrl || "",
-        "ลิงก์ Instagram": newBook.instagramUrl || "",
-        "Instagram": newBook.instagramUrl || "",
-
-        // --- คีย์ภาษาอังกฤษ ---
+      await postToAppsScript(API_URL, {
+        action: "addBookWithCover",
         type: newBook.type,
         title: newBook.title,
         author: newBook.author,
@@ -177,36 +125,24 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
         salePrice: newBook.salePrice,
         synopsis: newBook.synopsis,
         note: newBook.note,
-        imageUrl: finalImageUrl,
-        image: finalImageUrl,
-        imgUrl: finalImageUrl,
         twitterUrl: newBook.twitterUrl,
-        twitter: newBook.twitterUrl,
         instagramUrl: newBook.instagramUrl,
-        instagram: newBook.instagramUrl,
-      };
-
-      await fetch(API_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        imageData: coverImg.preview,
+        imageName: coverImg.file.name,
       });
 
-      setTimeout(() => {
-        setIsAdding(false);
-        setNewBook({
-          type: "นักเขียนอิสระ", title: "", author: "", publisher: "", price: "",
-          gp: "", stock: "", cost: "", salePrice: "", note: "", twitterUrl: "",
-          instagramUrl: "", synopsis: ""
-        });
-        setCoverImg({ file: null, preview: "" });
-        setUploading(false);
- fetchBooks();
-      }, 1500);
+      await fetchBooks();
+      setIsAdding(false);
+      setNewBook({
+        type: "นักเขียนอิสระ", title: "", author: "", publisher: "", price: "",
+        gp: "", stock: "", cost: "", salePrice: "", note: "", twitterUrl: "",
+        instagramUrl: "", synopsis: ""
+      });
+      setCoverImg({ file: null, preview: "" });
     } catch (err) {
       console.error(err);
-      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล: " + (err.message || ""));
+      setSubmitError(err.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+    } finally {
       setUploading(false);
     }
   };
@@ -214,22 +150,17 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
   const handleUpdate = async (e) => {
     e.preventDefault();
     try {
-      await fetch(API_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "updateStock",
-          id: editingBook["ลำดับ"],
-          stock: stockInput,
-          sold: soldInput,
-          note: noteInput,
-        }),
+      await postToAppsScript(API_URL, {
+        action: "updateStock",
+        id: editingBook["ลำดับ"],
+        stock: stockInput,
+        sold: soldInput,
+        note: noteInput,
       });
       setEditingBook(null);
-      fetchBooks();
-    } catch {
-      alert("เกิดข้อผิดพลาด");
+      await fetchBooks();
+    } catch (error) {
+      alert(error.message || "เกิดข้อผิดพลาด");
     }
   };
 
@@ -327,7 +258,10 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
           </button>
           {viewMode === "stock" && (
             <button
-              onClick={() => setIsAdding(true)}
+              onClick={() => {
+                setSubmitError("");
+                setIsAdding(true);
+              }}
               className="px-4 py-2 bg-[#800020] text-[#f1e6d2] rounded-lg font-bold text-xs"
             >
               ➕ เพิ่มหนังสือใหม่
@@ -772,6 +706,14 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
                   {uploading ? "กำลังบันทึกและอัปโหลดรูป..." : "บันทึกระบบ"}
                 </button>
               </div>
+              {submitError && (
+                <p
+                  role="alert"
+                  className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700"
+                >
+                  บันทึกไม่สำเร็จ: {submitError}
+                </p>
+              )}
             </form>
           </div>
         </div>

@@ -1,4 +1,26 @@
-# React + Vite
+# Sonnet & co.
+
+## Google Sheets และรูปหน้าปก
+
+ระบบเพิ่มหนังสือใช้ Google Apps Script เก็บไฟล์รูปไว้ในโฟลเดอร์
+`Sonnet Book Covers` บน Google Drive แล้วบันทึก direct URL ลงคอลัมน์
+`ลิงก์รูปภาพ` ของชีต `Sheet Name`
+
+### ติดตั้ง Google Apps Script
+
+1. เปิด Google Sheet `BookStock`
+2. ไปที่ **Extensions → Apps Script**
+3. แทนที่โค้ดเดิมด้วยไฟล์ [`apps-script/Code.gs`](./apps-script/Code.gs)
+4. กด **Deploy → Manage deployments → Edit**
+5. เลือก **New version**, ตั้ง **Execute as: Me** และ
+   **Who has access: Anyone**
+6. กด Deploy และอนุญาตสิทธิ์ Google Sheets/Google Drive
+7. ถ้า URL ของ Web app เปลี่ยน ให้อัปเดต `API_URL` ใน `src/App.jsx`
+
+ต้อง Deploy เป็นเวอร์ชันใหม่ทุกครั้งที่แก้ `Code.gs`; การกด Save อย่างเดียวไม่อัปเดต
+Web app ที่ใช้งานอยู่
+
+## Development
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

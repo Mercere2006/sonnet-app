@@ -12,29 +12,28 @@ export default function App() {
 
   const fetchBooks = async () => {
     try {
-      const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(API_URL)}`;
-      const response = await fetch(proxyUrl);
+      const response = await fetch(`${API_URL}?t=${Date.now()}`, {
+        cache: "no-store",
+      });
       if (!response.ok) throw new Error("Network error");
       const data = await response.json();
-      if (data && !data.error && Array.isArray(data)) {
-        setBooks(data);
+      if (!Array.isArray(data)) {
+        throw new Error(data?.message || "รูปแบบข้อมูลจาก Google Sheets ไม่ถูกต้อง");
       }
+      setBooks(data);
       setLoading(false);
+      return data;
     } catch (error) {
       console.error("Error fetching data:", error);
-      try {
-        const directRes = await fetch(API_URL);
-        const directData = await directRes.json();
-        if (Array.isArray(directData)) setBooks(directData);
-      } catch (e) { console.error(e); }
       setLoading(false);
+      throw error;
     }
   };
 
   useEffect(() => {
-    fetchBooks();
+    fetchBooks().catch(() => {});
     const interval = setInterval(() => {
-      fetchBooks();
+      fetchBooks().catch(() => {});
     }, 5000); 
     return () => clearInterval(interval);
   }, []);
