@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { postToAppsScript } from "../lib/appsScriptApi";
 
 // แก้ไขบรรทัดแรกสุด
@@ -33,13 +33,20 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
     synopsis: "",
   });
 
-  // 📸 สเตตัสอัปโหลดรูปภาพช่องเดี่ยว (ประหยัดพื้นที่)
-  const [coverImg, setCoverImg] = useState({ file: null, preview: "" });
+  // 📸 สเตตัสอัปโหลดรูปภาพหลายช่องทาง
+  const [coverImgs, setCoverImgs] = useState([]); // [{ file, preview }]
   const [uploading, setUploading] = useState(false);
   const [submitError, setSubmitError] = useState("");
 
-  // บีบอัดรูปก่อนส่งไป Google Apps Script เพื่อลดเวลาอัปโหลดและขนาด request
-  const compressImage = (file, maxWidth = 600, maxHeight = 600, quality = 0.65) => {
+  // 🎥 สเตตัสเปิดกล้องถ่ายภาพสด
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
+  const videoRef = useRef(null);
+  const galleryInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
+  // บีบอัดรูปก่อนส่งไป Google Apps Script เพื่อให้ได้ความคมชัดสูงระดับ HD และขนาดกะทัดรัด
+  const compressImage = (file, maxWidth = 1600, maxHeight = 1600, quality = 0.88) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(file);
@@ -66,6 +73,8 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext("2d");
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
           ctx.drawImage(img, 0, 0, width, height);
           resolve(canvas.toDataURL("image/jpeg", quality));
         };
@@ -86,21 +95,93 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
   };
 
   const handleImageChange = async (e) => {
-    const file = e.target.files[0];
-    if (file) {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
       setSubmitError("");
-      try {
-        const compressedBase64 = await compressImage(file);
-        setCoverImg({ file: file, preview: compressedBase64 });
-      } catch (err) {
-        console.error("Compression error:", err);
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setCoverImg({ file: file, preview: reader.result });
-        };
-        reader.readAsDataURL(file);
+      const newImgs = [];
+      for (const file of files) {
+        try {
+          const compressedBase64 = await compressImage(file);
+          newImgs.push({ file, preview: compressedBase64 });
+        } catch (err) {
+          console.error("Compression error:", err);
+          const base64 = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(file);
+          });
+          newImgs.push({ file, preview: base64 });
+        }
+      }
+      setCoverImgs((prev) => [...prev, ...newImgs]);
+    }
+  };
+
+  const handleRemoveImage = (indexToRemove) => {
+    setCoverImgs((prev) => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  const handleSetCover = (indexToSet) => {
+    setCoverImgs((prev) => {
+      const copy = [...prev];
+      const [selected] = copy.splice(indexToSet, 1);
+      return [selected, ...copy];
+    });
+  };
+
+  // 📷 ฟังก์ชันเปิดกล้องถ่ายภาพสดระดับ HD
+  const startLiveCamera = async () => {
+    try {
+      setSubmitError("");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
+      });
+      setCameraStream(stream);
+      setIsCameraActive(true);
+    } catch (err) {
+      console.error("Camera access error:", err);
+      if (cameraInputRef.current) {
+        cameraInputRef.current.click();
+      } else {
+        alert("ไม่สามารถเปิดกล้องถ่ายภาพสดได้ กรุณาเลือกรูปจากแกลเลอรีอุปกรณ์");
       }
     }
+  };
+
+  useEffect(() => {
+    if (isCameraActive && videoRef.current && cameraStream) {
+      videoRef.current.srcObject = cameraStream;
+    }
+  }, [isCameraActive, cameraStream]);
+
+  const stopLiveCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+    setIsCameraActive(false);
+  };
+
+  const captureCameraPhoto = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 960;
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.90);
+
+    setCoverImgs((prev) => [
+      ...prev,
+      { file: null, preview: dataUrl },
+    ]);
   };
 
   const handleAddBookSubmit = async (e) => {
@@ -108,9 +189,12 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
     setSubmitError("");
     setUploading(true);
     try {
-      if (!coverImg.file || !coverImg.preview) {
-        throw new Error("กรุณาเลือกรูปภาพหน้าปกหนังสือ");
+      if (coverImgs.length === 0) {
+        throw new Error("กรุณาเลือกหรือถ่ายรูปภาพอย่างน้อย 1 รูป");
       }
+
+      const imagesData = coverImgs.map((img) => img.preview);
+      const imageNames = coverImgs.map((img) => (img.file ? img.file.name : "image.jpg"));
 
       await postToAppsScript(API_URL, {
         action: "addBookWithCover",
@@ -127,8 +211,10 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
         note: newBook.note,
         twitterUrl: newBook.twitterUrl,
         instagramUrl: newBook.instagramUrl,
-        imageData: coverImg.preview,
-        imageName: coverImg.file.name,
+        imageData: imagesData[0] || "",
+        imageName: imageNames[0] || "",
+        imagesData: imagesData,
+        imageNames: imageNames,
       });
 
       await fetchBooks();
@@ -138,7 +224,7 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
         gp: "", stock: "", cost: "", salePrice: "", note: "", twitterUrl: "",
         instagramUrl: "", synopsis: ""
       });
-      setCoverImg({ file: null, preview: "" });
+      setCoverImgs([]);
     } catch (err) {
       console.error(err);
       setSubmitError(err.message || "เกิดข้อผิดพลาดในการบันทึกข้อมูล");
@@ -606,27 +692,104 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
                 </div>
               )}
 
-              <div className="bg-[#fbf9f6] p-3 rounded-xl border border-dashed border-[#d7ccc8]">
-                <label className="block text-xs font-bold text-[#4a0414] mb-1.5">
-                  รูปหน้าปกหนังสือ (อัปโหลดจากเครื่อง / ถ่ายภาพจากกล้อง)
-                </label>
+              <div className="bg-[#fbf9f6] p-3.5 rounded-xl border border-dashed border-[#d7ccc8] space-y-3 text-left">
+                <div className="flex justify-between items-center">
+                  <label className="block text-xs font-bold text-[#4a0414]">
+                    📸 รูปภาพหนังสือ (เลือกได้หลายรูป / ถ่ายรูปหลายมุม)
+                  </label>
+                  <span className="text-[10px] text-[#8d6e63] font-medium">
+                    รูปแรกจะเป็นรูปปกหลัก
+                  </span>
+                </div>
+
+                {/* ปุ่มเลือกรูปภาพแบบแยกช่องทาง */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="py-2 px-3 bg-[#efebe9] hover:bg-[#d7ccc8] text-[#4a0414] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer border border-[#d7ccc8]"
+                  >
+                    📁 เลือกรูปจากแกลเลอรี
+                  </button>
+                  <button
+                    type="button"
+                    onClick={startLiveCamera}
+                    className="py-2 px-3 bg-[#800020] hover:bg-[#4a0414] text-[#f1e6d2] font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+                  >
+                    📷 ถ่ายรูปด้วยกล้อง
+                  </button>
+                </div>
+
+                {/* Hidden Input Elements */}
                 <input
                   type="file"
+                  ref={galleryInputRef}
+                  accept="image/*"
+                  multiple
+                  onChange={handleImageChange}
+                  className="hidden"
+                />
+                <input
+                  type="file"
+                  ref={cameraInputRef}
                   accept="image/*"
                   capture="environment"
-                  required
                   onChange={handleImageChange}
-                  className="block w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-[#800020] file:text-white hover:file:bg-[#4a0414] file:cursor-pointer"
+                  className="hidden"
                 />
-                {coverImg.preview && (
-                  <div className="mt-3 text-center">
-                    <img
-                      src={coverImg.preview}
-                      alt="Preview"
-                      className="h-32 mx-auto rounded-lg object-cover border"
-                    />
+
+                {/* รายการพรีวิวรูปภาพที่เลือก / ถ่ายไว้ */}
+                {coverImgs.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <div className="text-[11px] font-bold text-[#6d4c41] flex justify-between">
+                      <span>รายการรูปภาพ ({coverImgs.length} รูป):</span>
+                      <span className="text-[10px] text-[#8d6e63]">กด ⭐ เพื่อตั้งเป็นปกหลัก</span>
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto py-2 px-1 scrollbar-thin">
+                      {coverImgs.map((img, idx) => (
+                        <div key={idx} className="relative w-20 h-24 rounded-lg overflow-hidden border-2 border-[#d7ccc8] flex-shrink-0 group shadow-xs bg-white">
+                          <img src={img.preview} alt={`Preview ${idx + 1}`} className="w-full h-full object-cover" />
+                          
+                          {/* ปุ่มตั้งเป็นปกหลัก & ปุ่มลบ */}
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-1">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImage(idx)}
+                              className="self-end w-5 h-5 rounded-full bg-red-600 text-white flex items-center justify-center text-[10px] font-bold cursor-pointer hover:bg-red-700 shadow"
+                              title="ลบรูปนี้"
+                            >
+                              ✕
+                            </button>
+                            {idx !== 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleSetCover(idx)}
+                                className="w-full py-0.5 bg-amber-500 hover:bg-amber-600 text-white text-[9px] font-bold rounded cursor-pointer text-center"
+                              >
+                                ⭐ ตั้งเป็นปกหลัก
+                              </button>
+                            )}
+                          </div>
+
+                          {idx === 0 ? (
+                            <span className="absolute bottom-0 left-0 right-0 bg-[#800020] text-white text-[9px] text-center font-bold py-0.5">
+                              ⭐ ปกหลัก
+                            </span>
+                          ) : (
+                            <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] text-center font-medium py-0.5">
+                              มุมที่ {idx + 1}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
+                ) : (
+                  <p className="text-[11px] text-[#8d6e63] italic text-center py-2 border border-dashed border-[#d7ccc8]/70 rounded-lg">
+                    ยังไม่มีรูปภาพ ให้กดเลือกรูปจากแกลเลอรี หรือเปิดกล้องเพื่อถ่ายรูป
+                  </p>
                 )}
+
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -732,7 +895,7 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
             <form onSubmit={handleUpdate} className="space-y-4 mt-4 text-sm">
               <div>
                 <label className="text-xs font-bold text-[#5d4037]">
-                  ¼จำนวนสต็อก (รวมทั้งหมด)
+                  จำนวนสต็อก (รวมทั้งหมด)
                 </label>
                 <input
                   type="number"
@@ -786,6 +949,56 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
           </div>
         </div>
       )}
+
+      {/* 📷 LIVE CAMERA CAPTURE MODAL */}
+      {isCameraActive && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50 animate-fadeIn text-left">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-5 text-center relative border border-[#d7ccc8]">
+            <div className="flex justify-between items-center border-b pb-2 mb-3">
+              <h3 className="font-serif font-bold text-[#4a0414] text-base flex items-center gap-2">
+                📷 ถ่ายรูปหนังสือหลายมุมด้วยกล้อง
+              </h3>
+              <button
+                onClick={stopLiveCamera}
+                className="w-7 h-7 rounded-full bg-[#efebe9] hover:bg-[#800020] text-[#5d4037] hover:text-white flex items-center justify-center font-bold text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="relative aspect-[4/3] bg-slate-900 rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-cover"
+              />
+              <div className="absolute top-2 right-2 bg-black/70 text-white text-[11px] px-2 py-0.5 rounded-md font-mono backdrop-blur-xs">
+                ถ่ายแล้ว {coverImgs.length} รูป
+              </div>
+            </div>
+
+            <div className="flex gap-2 justify-center items-center mt-4">
+              <button
+                type="button"
+                onClick={captureCameraPhoto}
+                className="flex-1 py-2.5 bg-[#800020] hover:bg-[#4a0414] text-[#f1e6d2] rounded-xl font-bold text-xs sm:text-sm shadow-md flex items-center justify-center gap-1.5 transition transform active:scale-95 cursor-pointer"
+              >
+                📸 แชะ! ถ่ายรูปมุมนี้
+              </button>
+              <button
+                type="button"
+                onClick={stopLiveCamera}
+                className="py-2.5 px-4 bg-[#efebe9] text-[#5d4037] hover:bg-[#d7ccc8] rounded-xl font-bold text-xs sm:text-sm transition cursor-pointer"
+              >
+                เสร็จสิ้น ({coverImgs.length} รูป)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
