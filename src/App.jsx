@@ -5,7 +5,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import BookShowcase from './Components/BookShowcase';
 import AdminDashboard from './Components/AdminDashboard';
 
-const API_URL = import.meta.env.VITE_APP_SCRIPT_API_KEY;
+const API_URL = import.meta.env.VITE_APP_SCRIPT_API_KEY || "https://script.google.com/macros/s/AKfycbyVRMmihY04utkXbrlMNzR_v7iNETwU40f2y9mhTByjoLYfztRBtqVnie_H-wOmh_Ookg/exec";
 
 export default function App() {
   const [books, setBooks] = useState([]);

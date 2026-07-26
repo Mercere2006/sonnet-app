@@ -3,7 +3,9 @@ import { postToAppsScript } from "../lib/appsScriptApi";
 
 // แก้ไขบรรทัดแรกสุด
 export default function AdminDashboard({ books, fetchBooks, API_URL }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem("admin_logged_in") === "true";
+  });
   const [passwordInput, setPasswordInput] = useState("");
   const ADMIN_PASSWORD = "admin1234";
 
@@ -88,6 +90,7 @@ export default function AdminDashboard({ books, fetchBooks, API_URL }) {
     e.preventDefault();
     if (passwordInput === ADMIN_PASSWORD) {
       setIsAuthenticated(true);
+      localStorage.setItem("admin_logged_in", "true");
     } else {
       alert("รหัสผ่านไม่ถูกต้อง!");
       setPasswordInput("");
